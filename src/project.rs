@@ -4,21 +4,19 @@ use crate::{
     Error, Result, Service,
 };
 use git2::Repository;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
-
-// TODOs:
-// * remove the need for mutable borrow on Project::get_service, get_recipe,
-//   etc.
+use std::rc::Rc;
 
 const PROJECT_CONFIG_FILENAME: &'static str = "orcs.toml";
 const SERVICE_CONFIG_FILENAME: &'static str = "orcs.toml";
 const SERVICE_FOLDER: &'static str = "srv";
 const RECIPE_FOLDER: &'static str = "rcp";
 
-/// Orcs Project
 #[derive(Default)]
+/// Orcs Project
 pub struct Project {
     /// Root folder for the project
     path: PathBuf,
@@ -31,7 +29,7 @@ pub struct Project {
     /// Users shouldn't interact with this directly (thus this is set to
     /// private), but use the `get_service()` and `get_all_services()` functions
     /// to retrieve one or multiple services.
-    services: HashMap<String, Service>,
+    services: Cell<HashMap<String, Rc<Service>>>,
 
     /// Flag if we've already loaded all services or not.
     ///
@@ -39,10 +37,10 @@ pub struct Project {
     /// `get_all_services()` call, having data in the service HashMap is not a
     /// good indicator if we have all services loaded already. Therefore, we
     /// need a flag to load this explicitely.
-    services_all_loaded: bool,
+    services_all_loaded: Cell<bool>,
 
     /// Loaded recipes for the project.
-    recipes: HashMap<String, RecipeConfig>,
+    recipes: Cell<HashMap<String, Rc<RecipeConfig>>>,
 }
 
 impl Project {
@@ -102,18 +100,24 @@ impl Project {
     ///
     /// If the service was already loaded before, return it from the Project's
     /// internal store, otherwise fetch it.
-    pub fn get_service(&mut self, service_name: &str) -> Result<&Service> {
+    pub fn get_service(&self, service_name: &str) -> Result<Rc<Service>> {
+        let mut services = self.services.take();
         // Only load the service if we haven't loaded it already
-        if !self.services.contains_key(service_name) {
-            let service = self.load_service(service_name)?;
+        if !services.contains_key(service_name) {
+            let service = Rc::new(self.load_service(service_name)?);
 
-            self.services.insert(service_name.to_string(), service);
+            services.insert(service_name.to_string(), service);
         }
 
-        Ok(self
-            .services
+        let service = services
             .get(service_name)
-            .expect("failed to get service"))
+            .expect("failed to get service")
+            .clone();
+
+        // Set back the HashMap in the Cell
+        self.services.set(services);
+
+        Ok(service)
     }
 
     /// Return all services for a given project
@@ -121,63 +125,85 @@ impl Project {
     /// The first time this method is called, it will scan the project folder
     /// for all projects and save it into the Project's internal state (thus
     /// the need to pass a mutable reference).
-    pub fn get_all_services(&mut self) -> Result<&HashMap<String, Service>> {
-        if !self.services_all_loaded {
+    pub fn get_all_services(&self) -> Result<HashMap<String, Rc<Service>>> {
+        let mut services = self.services.take();
+        if !self.services_all_loaded.get() {
             // Load all services
-            self.services = self.scan_services(self.path.join(SERVICE_FOLDER))?;
+            services.extend(self.scan_services(self.path.join(SERVICE_FOLDER))?);
 
-            self.services_all_loaded = true;
+            self.services_all_loaded.set(true);
         }
 
         // Return all services
-        Ok(&self.services)
+        //
+        // This clones the `HashMap` and `Rc`s, but not the internal `Service`
+        // structs.
+        let retval = services.clone();
+
+        // Set back the HashMap in the Cell
+        self.services.set(services);
+
+        Ok(retval)
     }
 
-    /// Get a recipe from its name
-    ///
-    /// If the recipe was already loaded before, return it from the Project's
-    /// internal store, otherwise fetch it.
-    fn get_recipe(&mut self, recipe_name: &str) -> Result<&RecipeConfig> {
-        // Only load the recipe if it wasn't loaded previously
-        if !self.recipes.contains_key(recipe_name) {
-            let recipe = self.load_recipe_config(recipe_name)?;
-            self.recipes.insert(recipe_name.to_string(), recipe);
-        }
+    // /// Get a recipe from its name
+    // ///
+    // /// If the recipe was already loaded before, return it from the Project's
+    // /// internal store, otherwise fetch it.
+    // fn get_recipe(&self, recipe_name: &str) -> Result<Rc<RecipeConfig>> {
+    //     let mut recipes = self.recipes.get_mut();
+    //     // Only load the recipe if it wasn't loaded previously
+    //     if !recipes.contains_key(recipe_name) {
+    //         let recipe = self.load_recipe_config(recipe_name)?;
+    //         recipes.insert(recipe_name.to_string(), recipe);
+    //     }
 
-        Ok(self.recipes.get(recipe_name).expect("failed to get recipe"))
-    }
+    //     Ok(recipes
+    //         .get(recipe_name)
+    //         .expect("failed to get recipe")
+    //         .clone())
+    // }
 
     /// Retrieve multiple recipes at once
     ///
     /// This will return the recipes in the same order as the names provided.
-    fn get_recipes(&mut self, recipe_names: &[String]) -> Result<Vec<&RecipeConfig>> {
+    fn get_recipes(&self, recipe_names: &[String]) -> Result<Vec<Rc<RecipeConfig>>> {
+        let mut recipes = self.recipes.take();
         // First loop to perform mutable operations (loading and storing the
         // recipes that we haven't scanned yet).
         for recipe_name in recipe_names {
-            if !self.recipes.contains_key(recipe_name) {
+            if !recipes.contains_key(recipe_name) {
                 let recipe = self.load_recipe_config(recipe_name)?;
-                self.recipes.insert(recipe_name.to_string(), recipe);
+                recipes.insert(recipe_name.to_string(), Rc::new(recipe));
             }
         }
 
         // Second loop to retrieve the recipes requested
-        let mut recipes: Vec<&RecipeConfig> = Default::default();
+        let mut req_recipes: Vec<Rc<RecipeConfig>> = Default::default();
         for recipe_name in recipe_names {
-            recipes.push(self.recipes.get(recipe_name).expect("failed to get recipe"));
+            req_recipes.push(
+                recipes
+                    .get(recipe_name)
+                    .expect("failed to get recipe")
+                    .clone(),
+            );
         }
 
-        Ok(recipes)
+        // Set back the HashMap in the Cell
+        self.recipes.set(recipes);
+
+        Ok(req_recipes)
     }
 
     /// Try to find services in the given folder
     ///
     /// This will recursively scan all folders in a given `dir` to try to find
     /// all services and will return a HashMap with all values.
-    fn scan_services<P>(&mut self, dir: P) -> Result<HashMap<String, Service>>
+    fn scan_services<P>(&self, dir: P) -> Result<HashMap<String, Rc<Service>>>
     where
         P: AsRef<Path>,
     {
-        let mut services: HashMap<String, Service> = Default::default();
+        let mut services: HashMap<String, Rc<Service>> = Default::default();
 
         let dir = dir.as_ref();
 
@@ -192,7 +218,7 @@ impl Project {
                 // We found a service
                 let service_name = self.get_service_name(&path);
                 let service = self.load_service(&service_name)?;
-                services.insert(service_name, service);
+                services.insert(service_name, Rc::new(service));
             } else {
                 // This is a folder, but there's no service configuration file,
                 // therefore we should scan it too
@@ -204,7 +230,7 @@ impl Project {
     }
 
     /// Internal method to load a service
-    fn load_service(&mut self, service_name: &str) -> Result<Service> {
+    fn load_service(&self, service_name: &str) -> Result<Service> {
         // Load the config
         let service_config: ServiceConfig = load_config(
             self.path
@@ -309,26 +335,26 @@ mod tests {
             .expect("unable to write service config file");
     }
 
-    fn create_recipe<P>(path: P, name: &str)
-    where
-        P: AsRef<Path>,
-    {
-        // Create service folder
-        let recipe_path = path.as_ref().join(RECIPE_FOLDER);
-        create_dir_all(&recipe_path).expect("unable to create recipe folder");
+    // fn create_recipe<P>(path: P, name: &str)
+    // where
+    //     P: AsRef<Path>,
+    // {
+    //     // Create service folder
+    //     let recipe_path = path.as_ref().join(RECIPE_FOLDER);
+    //     create_dir_all(&recipe_path).expect("unable to create recipe folder");
 
-        // Create service config file
-        let mut config_file = File::create(recipe_path.join(format!("{}.toml", name)))
-            .expect("unable to create recipe config file");
-        let config_data = "
-        [steps.my-step]
-        check = \"my-check-script\"
-        run = \"my-run-script\"
-        ";
-        config_file
-            .write_all(config_data.as_bytes())
-            .expect("unable to write recipe config file");
-    }
+    //     // Create service config file
+    //     let mut config_file = File::create(recipe_path.join(format!("{}.toml", name)))
+    //         .expect("unable to create recipe config file");
+    //     let config_data = "
+    //     [steps.my-step]
+    //     check = \"my-check-script\"
+    //     run = \"my-run-script\"
+    //     ";
+    //     config_file
+    //         .write_all(config_data.as_bytes())
+    //         .expect("unable to write recipe config file");
+    // }
 
     #[test]
     fn load_from_path() {
@@ -361,27 +387,25 @@ mod tests {
 
         // Load the project
         // This should return an Ok(_) value.
-        let mut project = Project::from_path(folder).expect("failed to load the project");
+        let project = Project::from_path(folder).expect("failed to load the project");
+
+        // Load a service
+        let service = project
+            .get_service("my-service")
+            .expect("failed to get service");
 
         // Check if all values are correct
         assert_eq!(project.path, folder);
         assert_eq!(project.config.name, project_name);
         assert!(project.config.steps.contains_key(step_name));
-        assert!(!project.services.contains_key("my-service"));
+        assert_eq!(service.name, "my-service");
+        let service_step = service
+            .get_step("my-step")
+            .expect("failed to get service step");
+        assert_eq!(service_step.name, "my-step:my-service");
 
-        // Load a service
-        {
-            let service = project
-                .get_service("my-service")
-                .expect("failed to get service");
-            assert_eq!(service.name, "my-service");
-            let service_step = service
-                .get_step("my-step")
-                .expect("failed to get service step");
-            assert_eq!(service_step.name, "my-step:my-service");
-        }
-
-        assert!(project.services.contains_key("my-service"));
+        let services = project.services.take();
+        assert!(services.contains_key("my-service"));
     }
 
     #[test]
