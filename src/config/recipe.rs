@@ -23,8 +23,22 @@ pub struct RecipeStepConfig {
     pub run: ScriptConfig,
 }
 
-// TODO: add tests
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config() {
+        let config = RecipeConfig::default();
+
+        assert_eq!(config.steps.len(), 0);
+    }
+
+    #[test]
+    fn default_step_config() {
+        let step_config = RecipeStepConfig::default();
+
+        assert_eq!(step_config.check, ScriptConfig::None);
+        assert_eq!(step_config.run, ScriptConfig::None);
+    }
+}

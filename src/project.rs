@@ -9,7 +9,6 @@ use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 
 // TODOs:
-// * expose Service through higher-level (and resolved) abstraction
 // * remove the need for mutable borrow on Project::get_service, get_recipe,
 //   etc.
 
@@ -59,7 +58,6 @@ impl Project {
 
         // Loading configuration
         let config = load_config(path.join(PROJECT_CONFIG_FILENAME))?;
-
 
         // Return the project
         let project = Self {
@@ -216,7 +214,7 @@ impl Project {
         )?;
 
         // Create a ServiceBuilder
-        let mut service= Service::from_config(service_name, &service_config);
+        let mut service = Service::from_config(service_name, &service_config);
 
         // Parse all recipes in the service config
         let recipes = self.get_recipes(&service_config.recipes)?;
@@ -257,7 +255,7 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
+    use std::fs::{create_dir_all, File};
     use std::io::prelude::*;
     use tempfile::tempdir;
 
@@ -292,8 +290,49 @@ mod tests {
         project_dir
     }
 
+    fn create_service<P>(path: P, name: &str)
+    where
+        P: AsRef<Path>,
+    {
+        // Create service folder
+        let service_path = path.as_ref().join(SERVICE_FOLDER).join(name);
+        create_dir_all(&service_path).expect("unable to create service folder");
+
+        // Create service config file
+        let mut config_file = File::create(service_path.join(SERVICE_CONFIG_FILENAME))
+            .expect("unable to create service config file");
+        let config_data = "
+        [steps.my-step]
+        ";
+        config_file
+            .write_all(config_data.as_bytes())
+            .expect("unable to write service config file");
+    }
+
+    fn create_recipe<P>(path: P, name: &str)
+    where
+        P: AsRef<Path>,
+    {
+        // Create service folder
+        let recipe_path = path.as_ref().join(RECIPE_FOLDER);
+        create_dir_all(&recipe_path).expect("unable to create recipe folder");
+
+        // Create service config file
+        let mut config_file = File::create(recipe_path.join(format!("{}.toml", name)))
+            .expect("unable to create recipe config file");
+        let config_data = "
+        [steps.my-step]
+        check = \"my-check-script\"
+        run = \"my-run-script\"
+        ";
+        config_file
+            .write_all(config_data.as_bytes())
+            .expect("unable to write recipe config file");
+    }
+
     #[test]
     fn load_from_path() {
+        // Create the project
         let project_name = "my-project";
         let step_name = "my-step";
         let project_dir = create_project();
@@ -307,6 +346,42 @@ mod tests {
         assert_eq!(project.path, folder);
         assert_eq!(project.config.name, project_name);
         assert!(project.config.steps.contains_key(step_name));
+    }
+
+    #[test]
+    fn load_from_path_service() {
+        // Create the project
+        let project_name = "my-project";
+        let step_name = "my-step";
+        let project_dir = create_project();
+        let folder = project_dir.path();
+
+        // Create a service
+        create_service(&folder, "my-service");
+
+        // Load the project
+        // This should return an Ok(_) value.
+        let mut project = Project::from_path(folder).expect("failed to load the project");
+
+        // Check if all values are correct
+        assert_eq!(project.path, folder);
+        assert_eq!(project.config.name, project_name);
+        assert!(project.config.steps.contains_key(step_name));
+        assert!(!project.services.contains_key("my-service"));
+
+        // Load a service
+        {
+            let service = project
+                .get_service("my-service")
+                .expect("failed to get service");
+            assert_eq!(service.name, "my-service");
+            let service_step = service
+                .get_step("my-step")
+                .expect("failed to get service step");
+            assert_eq!(service_step.name, "my-step:my-service");
+        }
+
+        assert!(project.services.contains_key("my-service"));
     }
 
     #[test]

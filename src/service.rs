@@ -1,8 +1,7 @@
-use crate::{
-    config::{RecipeConfig, RecipeStepConfig, ScriptConfig, ServiceConfig, ServiceStepConfig},
-    Error, Result,
+use crate::config::{
+    RecipeConfig, RecipeStepConfig, ScriptConfig, ServiceConfig, ServiceStepConfig,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Service
 ///
@@ -28,17 +27,24 @@ impl Service {
     pub fn from_config<'a, 'b>(name: &'a str, config: &'b ServiceConfig) -> ServiceBuilder<'a, 'b> {
         ServiceBuilder {
             name: name,
-            steps: config.steps.iter().map(|(step_name, step_config)| (step_name, step_config.into())).collect(),
+            steps: config
+                .steps
+                .iter()
+                .map(|(step_name, step_config)| (step_name, step_config.into()))
+                .collect(),
         }
     }
 
-    // Retrieve a step
+    // Retrieve a `ServiceStep` pair if it exists
     pub fn get_step(&self, step_name: &str) -> Option<&ServiceStep> {
         self.steps.get(step_name)
     }
 }
 
 /// Builder for a Service
+///
+/// This is returned from the `Service::from_config` call and contains a method
+/// to process recipes one at a time.
 pub struct ServiceBuilder<'a, 'b> {
     name: &'a str,
 
@@ -57,7 +63,10 @@ impl<'a, 'b> ServiceBuilder<'a, 'b> {
                 self.steps.insert(step_name, step_config.into());
             }
             // Case 2: the service exists, but check or run are not set
-            let step_builder = self.steps.get_mut(step_name).expect("failed to get step builder");
+            let step_builder = self
+                .steps
+                .get_mut(step_name)
+                .expect("failed to get step builder");
             step_builder.with_recipe(step_config);
         }
 
@@ -71,10 +80,12 @@ impl<'a, 'b> ServiceBuilder<'a, 'b> {
             steps: self
                 .steps
                 .iter()
-                .map(|(step_name, step_builder)| (
-                    (*step_name).to_owned(),
-                    step_builder.build(self.name, step_name),
-                ))
+                .map(|(step_name, step_builder)| {
+                    (
+                        (*step_name).to_owned(),
+                        step_builder.build(self.name, step_name),
+                    )
+                })
                 .collect(),
         }
     }
@@ -123,10 +134,10 @@ impl<'a> ServiceStepBuilder<'a> {
     /// if the builder doesn't contain values for check or run and the recipe
     /// does.
     pub fn with_recipe(&mut self, config: &'a RecipeStepConfig) -> &mut Self {
-        if self.check == &ScriptConfig::None && config.check != ScriptConfig::None {
+        if self.check.is_empty() && !config.check.is_empty() {
             self.check = &config.check;
         }
-        if self.run == &ScriptConfig::None && config.run != ScriptConfig::None {
+        if self.run.is_empty() && !config.run.is_empty() {
             self.run = &config.run;
         }
 
@@ -173,10 +184,15 @@ mod tests {
     fn service_builder() {
         // Starting with a simple config
         let service_config = ServiceConfig {
-            steps: vec![(String::from("my-step"), ServiceStepConfig {
-                run: ScriptConfig::Boolean(true),
-                ..Default::default()
-            })].into_iter().collect(),
+            steps: vec![(
+                String::from("my-step"),
+                ServiceStepConfig {
+                    run: ScriptConfig::Boolean(true),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -202,10 +218,15 @@ mod tests {
 
         // Recipe
         let recipe_config = RecipeConfig {
-            steps: vec![(String::from("my-step"), RecipeStepConfig {
-                run: ScriptConfig::Boolean(true),
-                ..Default::default()
-            })].into_iter().collect(),
+            steps: vec![(
+                String::from("my-step"),
+                RecipeStepConfig {
+                    run: ScriptConfig::Boolean(true),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -234,24 +255,37 @@ mod tests {
 
         // Recipes
         let recipe_config1 = RecipeConfig {
-            steps: vec![(String::from("my-step1"), RecipeStepConfig {
-                run: ScriptConfig::Boolean(true),
-                ..Default::default()
-            })].into_iter().collect(),
+            steps: vec![(
+                String::from("my-step1"),
+                RecipeStepConfig {
+                    run: ScriptConfig::Boolean(true),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
         let recipe_config2 = RecipeConfig {
             steps: vec![
-                (String::from("my-step1"), RecipeStepConfig {
-                    run: ScriptConfig::Boolean(false),
-                    check: ScriptConfig::Boolean(false),
-                    ..Default::default()
-                }),
-                (String::from("my-step2"), RecipeStepConfig {
-                    run: ScriptConfig::Boolean(false),
-                    ..Default::default()
-                })
-            ].into_iter().collect(),
+                (
+                    String::from("my-step1"),
+                    RecipeStepConfig {
+                        run: ScriptConfig::Boolean(false),
+                        check: ScriptConfig::Boolean(false),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    String::from("my-step2"),
+                    RecipeStepConfig {
+                        run: ScriptConfig::Boolean(false),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
