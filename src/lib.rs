@@ -1,3 +1,4 @@
+pub mod cmd;
 mod config;
 mod error;
 mod project;

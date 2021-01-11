@@ -146,24 +146,6 @@ impl Project {
         Ok(retval)
     }
 
-    // /// Get a recipe from its name
-    // ///
-    // /// If the recipe was already loaded before, return it from the Project's
-    // /// internal store, otherwise fetch it.
-    // fn get_recipe(&self, recipe_name: &str) -> Result<Rc<RecipeConfig>> {
-    //     let mut recipes = self.recipes.get_mut();
-    //     // Only load the recipe if it wasn't loaded previously
-    //     if !recipes.contains_key(recipe_name) {
-    //         let recipe = self.load_recipe_config(recipe_name)?;
-    //         recipes.insert(recipe_name.to_string(), recipe);
-    //     }
-
-    //     Ok(recipes
-    //         .get(recipe_name)
-    //         .expect("failed to get recipe")
-    //         .clone())
-    // }
-
     /// Retrieve multiple recipes at once
     ///
     /// This will return the recipes in the same order as the names provided.

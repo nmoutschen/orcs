@@ -9,6 +9,7 @@ readme = "README.md"
 description = "Microservices monorepo orchestration tool"
 
 [dependencies]
+crossbeam-channel = "0.5"
 git2 = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
