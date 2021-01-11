@@ -28,17 +28,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config() {
+    fn default() {
         let config = RecipeConfig::default();
 
         assert_eq!(config.steps.len(), 0);
     }
 
     #[test]
-    fn default_step_config() {
+    fn deserialize() {
+        let data = "
+            [steps.my-step]
+            depends_on = [\"a\", \"b\", \"c\"]
+            run = true
+            check = true
+        ";
+
+        let config: RecipeConfig = toml::from_str(data).expect("failed to deserialize data");
+
+        assert!(config.steps.contains_key("my-step"));
+
+        let step = config.steps.get("my-step").expect("failed to get step");
+        assert_eq!(step.run, ScriptConfig::Boolean(true));
+        assert_eq!(step.check, ScriptConfig::Boolean(true));
+    }
+
+    #[test]
+    fn default_step() {
         let step_config = RecipeStepConfig::default();
 
         assert_eq!(step_config.check, ScriptConfig::None);
         assert_eq!(step_config.run, ScriptConfig::None);
+    }
+
+    #[test]
+    fn deserialize_step() {
+        let data = "
+            run = true
+            check = true
+        ";
+        let step: RecipeStepConfig = toml::from_str(data).expect("unable to deserialize data");
+
+        assert_eq!(step.run, ScriptConfig::Boolean(true));
+        assert_eq!(step.check, ScriptConfig::Boolean(true));
     }
 }

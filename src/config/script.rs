@@ -80,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_override() {
+    fn deserialize_boolean() {
         let value = true;
         let dh: DataHolder = toml::from_str("commands = true").expect("unable to read config");
 

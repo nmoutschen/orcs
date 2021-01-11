@@ -9,7 +9,7 @@ pub struct ProjectConfig {
     pub name: String,
 
     #[serde(default)]
-    pub steps: HashMap<String, ProjectStep>,
+    pub steps: HashMap<String, ProjectStepConfig>,
 
     #[serde(default)]
     pub options: ProjectOptions,
@@ -20,7 +20,7 @@ pub struct ProjectConfig {
 /// This doesn't contain any default actions, but just the dependencies from
 /// that step to other steps.
 #[derive(Debug, Default, Deserialize)]
-pub struct ProjectStep {
+pub struct ProjectStepConfig {
     /// List of dependencies for that step.
     ///
     /// This should contain an array of step names that should be run before
@@ -79,21 +79,15 @@ fn default_container_image() -> String {
 mod tests {
     use super::*;
 
-    /*********
-     * STEPS *
-     *********/
-
-    /// Testing Step with Default
     #[test]
     fn default_step() {
-        let step: ProjectStep = Default::default();
+        let step: ProjectStepConfig = Default::default();
 
         assert_eq!(step.depends_on, Vec::new() as Vec<String>);
         assert_eq!(step.skip_run, false);
         assert_eq!(step.on_changed, StepOnChanged::Run);
     }
 
-    /// Testing deserializing a Step
     #[test]
     fn sample_step() {
         let data = "
@@ -101,14 +95,13 @@ mod tests {
             skip_run = true
             on_changed = \"check_first\"
         ";
-        let step: ProjectStep = toml::from_str(data).expect("unable to deserialize data");
+        let step: ProjectStepConfig = toml::from_str(data).expect("unable to deserialize data");
 
         assert_eq!(step.depends_on, ["a", "b", "c"]);
         assert_eq!(step.skip_run, true);
         assert_eq!(step.on_changed, StepOnChanged::CheckFirst);
     }
 
-    /// Testing deserializing all values of StepOnChanged
     #[test]
     fn sample_step_on_changed() {
         let test_cases = [
