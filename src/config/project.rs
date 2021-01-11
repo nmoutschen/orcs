@@ -80,6 +80,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn deserialize() {
+        let data = "
+        name = \"my-project\"
+
+        [options]
+
+        container_image = \"my-container\"
+
+        [steps.my-step]
+        depends_on = [\"a\", \"b\", \"c\"]
+        skip_run = true
+        on_changed = \"run\"
+        ";
+
+        let config: ProjectConfig = toml::from_str(data).expect("failed to deserialize data");
+
+        // Name
+        assert_eq!(config.name, "my-project");
+
+        // Options
+        assert_eq!(config.options.container_image, "my-container");
+
+        // Steps
+        assert!(config.steps.contains_key("my-step"));
+        let step = config.steps.get("my-step").expect("failed to get step");
+        assert_eq!(step.depends_on, ["a", "b", "c"]);
+        assert_eq!(step.skip_run, true);
+        assert_eq!(step.on_changed, StepOnChanged::Run);
+    }
+
+    #[test]
     fn default_step() {
         let step: ProjectStepConfig = Default::default();
 
@@ -89,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_step() {
+    fn deserialize_step() {
         let data = "
             depends_on = [\"a\", \"b\", \"c\"]
             skip_run = true
@@ -103,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_step_on_changed() {
+    fn deserialize_step_on_changed() {
         let test_cases = [
             ("skip", StepOnChanged::Skip),
             ("run", StepOnChanged::Run),
