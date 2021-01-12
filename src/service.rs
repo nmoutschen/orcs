@@ -1,6 +1,8 @@
 use crate::config::{
-    RecipeConfig, RecipeStepConfig, ScriptConfig, ServiceConfig, ServiceStepConfig,
+    ProjectStepConfig, ProjectStepOnChanged, RecipeConfig, RecipeStepConfig, ScriptConfig,
+    ServiceConfig, ServiceStepConfig,
 };
+use crate::{Error, Result};
 use std::collections::HashMap;
 
 /// Service
@@ -24,15 +26,33 @@ impl Service {
     /// This returns a builder to process the recipes mentioned in the
     /// configuration file, as the final `Service` struct is not aware of the
     /// recipes.
-    pub fn from_config<'a, 'b>(name: &'a str, config: &'b ServiceConfig) -> ServiceBuilder<'a, 'b> {
-        ServiceBuilder {
-            name: name,
+    pub fn from_config<'a, 'b, 'c>(
+        name: &'a str,
+        project_steps: &'c HashMap<String, ProjectStepConfig>,
+        config: &'b ServiceConfig,
+    ) -> Result<ServiceBuilder<'a, 'b, 'c>> {
+        Ok(ServiceBuilder {
+            name,
             steps: config
                 .steps
                 .iter()
-                .map(|(step_name, step_config)| (step_name, step_config.into()))
-                .collect(),
-        }
+                .map(|(step_name, step_config)| {
+                    Ok((
+                        step_name,
+                        ServiceStep::from_service_config(
+                            step_name,
+                            name,
+                            project_steps
+                                .get(step_name)
+                                .ok_or_else(|| Error::MissingStep {
+                                    name: step_name.to_string(),
+                                })?,
+                            step_config,
+                        ),
+                    ))
+                })
+                .collect::<Result<HashMap<_, _>, Error>>()?,
+        })
     }
 
     // Retrieve a `ServiceStep` pair if it exists
@@ -45,22 +65,37 @@ impl Service {
 ///
 /// This is returned from the `Service::from_config` call and contains a method
 /// to process recipes one at a time.
-pub struct ServiceBuilder<'a, 'b> {
+pub struct ServiceBuilder<'a, 'b, 'c> {
     name: &'a str,
 
-    steps: HashMap<&'b String, ServiceStepBuilder<'b>>,
+    steps: HashMap<&'b String, ServiceStepBuilder<'b, 'c>>,
 }
 
-impl<'a, 'b> ServiceBuilder<'a, 'b> {
+impl<'a, 'b, 'c> ServiceBuilder<'a, 'b, 'c> {
     /// Inject a recipe into the builder
     ///
     /// If a step doesn't exist in the `ServiceBuilder`, this will inject it
     /// with the values from the `RecipeConfig`.
-    pub fn with_recipe(&mut self, recipe: &'b RecipeConfig) -> &mut ServiceBuilder<'a, 'b> {
+    pub fn with_recipe(
+        &mut self,
+        project_steps: &'c HashMap<String, ProjectStepConfig>,
+        recipe: &'b RecipeConfig,
+    ) -> Result<&mut ServiceBuilder<'a, 'b, 'c>> {
         for (step_name, step_config) in &recipe.steps {
             // Case 1: the step doesn't exist, so we just override it
+            // TODO: add error for missing project step
             if !self.steps.contains_key(step_name) {
-                self.steps.insert(step_name, step_config.into());
+                let builder = ServiceStep::from_recipe_config(
+                    step_name,
+                    self.name,
+                    project_steps
+                        .get(step_name)
+                        .ok_or_else(|| Error::MissingStep {
+                            name: step_name.to_string(),
+                        })?,
+                    step_config,
+                );
+                self.steps.insert(step_name, builder);
             }
             // Case 2: the service exists, but check or run are not set
             let step_builder = self
@@ -70,7 +105,7 @@ impl<'a, 'b> ServiceBuilder<'a, 'b> {
             step_builder.with_recipe(step_config);
         }
 
-        self
+        Ok(self)
     }
 
     /// Build into an owned `Service`
@@ -80,12 +115,7 @@ impl<'a, 'b> ServiceBuilder<'a, 'b> {
             steps: self
                 .steps
                 .iter()
-                .map(|(step_name, step_builder)| {
-                    (
-                        (*step_name).to_owned(),
-                        step_builder.build(self.name, step_name),
-                    )
-                })
+                .map(|(step_name, step_builder)| ((*step_name).to_owned(), step_builder.build()))
                 .collect(),
         }
     }
@@ -99,37 +129,74 @@ pub struct ServiceStep {
 
     depends_on: Vec<String>,
 
+    on_changed: StepOnChanged,
+
     check: Script,
     run: Script,
 }
 
-pub struct ServiceStepBuilder<'a> {
-    depends_on: Option<&'a Vec<String>>,
+impl ServiceStep {
+    pub fn from_service_config<'a, 'b>(
+        step_name: &str,
+        service_name: &str,
+        pconfig: &'b ProjectStepConfig,
+        sconfig: &'a ServiceStepConfig,
+    ) -> ServiceStepBuilder<'a, 'b> {
+        ServiceStepBuilder {
+            name: format!("{}:{}", step_name, service_name),
+            depends_on: pconfig
+                .depends_on
+                .iter()
+                .map(|dep_step_name| format!("{}:{}", dep_step_name, service_name))
+                .chain(
+                    sconfig
+                        .depends_on
+                        .iter()
+                        .map(|dep_service_name| format!("{}:{}", step_name, dep_service_name)),
+                )
+                .collect(),
+
+            on_changed: &pconfig.on_changed,
+
+            check: &sconfig.check,
+            run: &sconfig.run,
+        }
+    }
+
+    pub fn from_recipe_config<'a, 'b>(
+        step_name: &str,
+        service_name: &str,
+        pconfig: &'b ProjectStepConfig,
+        rconfig: &'a RecipeStepConfig,
+    ) -> ServiceStepBuilder<'a, 'b> {
+        ServiceStepBuilder {
+            name: format!("{}:{}", step_name, service_name),
+            depends_on: pconfig
+                .depends_on
+                .iter()
+                .map(|dep_step_name| format!("{}:{}", dep_step_name, service_name))
+                .collect(),
+
+            on_changed: &pconfig.on_changed,
+
+            check: &rconfig.check,
+            run: &rconfig.run,
+        }
+    }
+}
+
+pub struct ServiceStepBuilder<'a, 'b> {
+    name: String,
+
+    depends_on: Vec<String>,
+
+    on_changed: &'b ProjectStepOnChanged,
+
     check: &'a ScriptConfig,
     run: &'a ScriptConfig,
 }
 
-impl<'a> From<&'a ServiceStepConfig> for ServiceStepBuilder<'a> {
-    fn from(config: &'a ServiceStepConfig) -> Self {
-        Self {
-            depends_on: Some(&config.depends_on),
-            check: &config.check,
-            run: &config.run,
-        }
-    }
-}
-
-impl<'a> From<&'a RecipeStepConfig> for ServiceStepBuilder<'a> {
-    fn from(config: &'a RecipeStepConfig) -> Self {
-        Self {
-            depends_on: None,
-            check: &config.check,
-            run: &config.run,
-        }
-    }
-}
-
-impl<'a> ServiceStepBuilder<'a> {
+impl<'a, 'b> ServiceStepBuilder<'a, 'b> {
     /// Update the `ServiceStepBuilder` with values from a `RecipeStepConfig`
     /// if the builder doesn't contain values for check or run and the recipe
     /// does.
@@ -145,13 +212,11 @@ impl<'a> ServiceStepBuilder<'a> {
     }
 
     /// Build into an owned `ServiceStep`
-    pub fn build(&self, service_name: &str, step_name: &str) -> ServiceStep {
+    pub fn build(&self) -> ServiceStep {
         ServiceStep {
-            name: format!("{}:{}", step_name, service_name),
-            depends_on: match self.depends_on {
-                Some(deps) => deps.clone(),
-                None => Vec::new(),
-            },
+            name: self.name.to_owned(),
+            depends_on: self.depends_on.to_owned(),
+            on_changed: self.on_changed.into(),
             check: self.check.into(),
             run: self.run.into(),
         }
@@ -176,6 +241,23 @@ impl From<&ScriptConfig> for Script {
     }
 }
 
+#[derive(Clone)]
+pub enum StepOnChanged {
+    Skip,
+    CheckFirst,
+    Run,
+}
+
+impl From<&ProjectStepOnChanged> for StepOnChanged {
+    fn from(source: &ProjectStepOnChanged) -> Self {
+        match source {
+            ProjectStepOnChanged::Skip => Self::Skip,
+            ProjectStepOnChanged::CheckFirst => Self::CheckFirst,
+            ProjectStepOnChanged::Run => Self::Run,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,9 +278,17 @@ mod tests {
             ..Default::default()
         };
 
-        let service_builder = Service::from_config("my-service", &service_config);
+        // Project Step Configs
+        let mut project_step_configs: HashMap<String, ProjectStepConfig> = HashMap::new();
+        project_step_configs.insert(String::from("my-step"), ProjectStepConfig::default());
 
+        // Build a service
+        let service_builder =
+            Service::from_config("my-service", &project_step_configs, &service_config)
+                .expect("failed to create builder");
         let service = service_builder.build();
+
+        // Get the step
         let service_step = service.steps.get("my-step").expect("failed to get step");
 
         assert_eq!(service.name, "my-service");
@@ -230,9 +320,17 @@ mod tests {
             ..Default::default()
         };
 
+        // Project Step Configs
+        let mut project_step_configs: HashMap<String, ProjectStepConfig> = HashMap::new();
+        project_step_configs.insert(String::from("my-step"), ProjectStepConfig::default());
+
         // Build the service
-        let mut service_builder = Service::from_config("my-service", &service_config);
-        service_builder.with_recipe(&recipe_config);
+        let mut service_builder =
+            Service::from_config("my-service", &project_step_configs, &service_config)
+                .expect("failed to create builder");
+        service_builder
+            .with_recipe(&project_step_configs, &recipe_config)
+            .expect("failed to use recipe");
 
         let service = service_builder.build();
         let service_step = service.steps.get("my-step").expect("failed to get step");
@@ -289,10 +387,21 @@ mod tests {
             ..Default::default()
         };
 
+        // Project Step Config
+        let mut project_step_configs: HashMap<String, ProjectStepConfig> = HashMap::new();
+        project_step_configs.insert(String::from("my-step1"), ProjectStepConfig::default());
+        project_step_configs.insert(String::from("my-step2"), ProjectStepConfig::default());
+
         // Build the service
-        let mut service_builder = Service::from_config("my-service", &service_config);
-        service_builder.with_recipe(&recipe_config1);
-        service_builder.with_recipe(&recipe_config2);
+        let mut service_builder =
+            Service::from_config("my-service", &project_step_configs, &service_config)
+                .expect("failed to create builder");
+        service_builder
+            .with_recipe(&project_step_configs, &recipe_config1)
+            .expect("failed to use recipe");
+        service_builder
+            .with_recipe(&project_step_configs, &recipe_config2)
+            .expect("failed to use recipe");
 
         let service = service_builder.build();
         let service_step1 = service.steps.get("my-step1").expect("failed to get step");
@@ -309,18 +418,62 @@ mod tests {
     }
 
     #[test]
+    fn service_builder_with_dependencies() {
+        // Starting with a simple config
+        let service_config = ServiceConfig {
+            steps: vec![(
+                String::from("my-step"),
+                ServiceStepConfig {
+                    depends_on: vec![String::from("my-service-dep")],
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        // Project Step Configs
+        let mut project_step_configs: HashMap<String, ProjectStepConfig> = HashMap::new();
+        project_step_configs.insert(String::from("my-step"), ProjectStepConfig {
+            depends_on: vec![String::from("my-step-dep")],
+            ..Default::default()
+        });
+
+        // Build a service
+        let service_builder =
+            Service::from_config("my-service", &project_step_configs, &service_config)
+                .expect("failed to create builder");
+        let service = service_builder.build();
+
+        // Get the step
+        let service_step = service.steps.get("my-step").expect("failed to get step");
+
+        assert_eq!(service.name, "my-service");
+        assert_eq!(service_step.depends_on.len(), 2);
+        assert!(service_step.depends_on.contains(&String::from("my-step:my-service-dep")));
+        assert!(service_step.depends_on.contains(&String::from("my-step-dep:my-service")));
+    }
+
+    #[test]
     fn service_step_builder() {
         // Starting with a simple config
         let step_config = ServiceStepConfig {
             run: ScriptConfig::Boolean(true),
             ..Default::default()
         };
+        let project_config = ProjectStepConfig::default();
 
         // Create the step builder
-        let step_builder: ServiceStepBuilder = (&step_config).into();
+        let step_builder = ServiceStep::from_service_config(
+            "my-step",
+            "my-service",
+            &project_config,
+            &step_config,
+        );
 
         // Build the ServiceStep
-        let step = step_builder.build("my-service", "my-step");
+        let step = step_builder.build();
 
         // Assertions
         assert_eq!(step.name, "my-step:my-service");
@@ -338,15 +491,21 @@ mod tests {
             run: ScriptConfig::Boolean(true),
             ..Default::default()
         };
+        let project_config = ProjectStepConfig::default();
 
         // Create the step builder
-        let mut step_builder: ServiceStepBuilder = (&step_config).into();
+        let mut step_builder = ServiceStep::from_service_config(
+            "my-step",
+            "my-service",
+            &project_config,
+            &step_config,
+        );
 
         // Apply the recipe
         step_builder.with_recipe(&recipe_config);
 
         // Build the ServiceStep
-        let step = step_builder.build("my-service", "my-step");
+        let step = step_builder.build();
 
         // Assertions
         assert_eq!(step.name, "my-step:my-service");
@@ -368,16 +527,22 @@ mod tests {
             run: ScriptConfig::Boolean(false),
             check: ScriptConfig::Boolean(false),
         };
+        let project_config = ProjectStepConfig::default();
 
         // Create the step builder
-        let mut step_builder: ServiceStepBuilder = (&step_config).into();
+        let mut step_builder = ServiceStep::from_service_config(
+            "my-step",
+            "my-service",
+            &project_config,
+            &step_config,
+        );
 
         // Apply the recipe
         step_builder.with_recipe(&recipe_config1);
         step_builder.with_recipe(&recipe_config2);
 
         // Build the ServiceStep
-        let step = step_builder.build("my-service", "my-step");
+        let step = step_builder.build();
 
         // Assertions
         assert_eq!(step.name, "my-step:my-service");

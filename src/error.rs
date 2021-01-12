@@ -29,6 +29,9 @@ pub enum Error {
     MissingRecipes {
         names: Vec<String>,
     },
+    MissingStep {
+        name: String,
+    },
 }
 
 impl fmt::Display for Error {
@@ -60,6 +63,9 @@ impl fmt::Display for Error {
             // Service errors
             Self::MissingRecipes { names } => {
                 write!(f, "missing one or more recipes: '{}'", names.join(","))
+            }
+            Self::MissingStep { name } => {
+                write!(f, "missing a step in the project configuration: '{}'", name)
             }
         }
     }

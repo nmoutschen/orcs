@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-const DEFAULT_CONTAINER_IMAGE: &'static str = "ubuntu:20.04";
+const DEFAULT_CONTAINER_IMAGE: &str = "ubuntu:20.04";
 
 /// Representation of the project configuration file
 #[derive(Debug, Default, Deserialize)]
@@ -38,11 +38,11 @@ pub struct ProjectStepConfig {
     /// Whether we should run this stage when we detected a change within a
     /// service.
     #[serde(default)]
-    pub on_changed: StepOnChanged,
+    pub on_changed: ProjectStepOnChanged,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
-pub enum StepOnChanged {
+pub enum ProjectStepOnChanged {
     /// Don't do anything for this step on changed
     #[serde(rename = "skip")]
     Skip,
@@ -54,7 +54,7 @@ pub enum StepOnChanged {
     Run,
 }
 
-impl Default for StepOnChanged {
+impl Default for ProjectStepOnChanged {
     fn default() -> Self {
         Self::Run
     }
@@ -107,7 +107,7 @@ mod tests {
         let step = config.steps.get("my-step").expect("failed to get step");
         assert_eq!(step.depends_on, ["a", "b", "c"]);
         assert_eq!(step.skip_run, true);
-        assert_eq!(step.on_changed, StepOnChanged::Run);
+        assert_eq!(step.on_changed, ProjectStepOnChanged::Run);
     }
 
     #[test]
@@ -116,7 +116,7 @@ mod tests {
 
         assert_eq!(step.depends_on, Vec::new() as Vec<String>);
         assert_eq!(step.skip_run, false);
-        assert_eq!(step.on_changed, StepOnChanged::Run);
+        assert_eq!(step.on_changed, ProjectStepOnChanged::Run);
     }
 
     #[test]
@@ -130,19 +130,19 @@ mod tests {
 
         assert_eq!(step.depends_on, ["a", "b", "c"]);
         assert_eq!(step.skip_run, true);
-        assert_eq!(step.on_changed, StepOnChanged::CheckFirst);
+        assert_eq!(step.on_changed, ProjectStepOnChanged::CheckFirst);
     }
 
     #[test]
     fn deserialize_step_on_changed() {
         let test_cases = [
-            ("skip", StepOnChanged::Skip),
-            ("run", StepOnChanged::Run),
-            ("check_first", StepOnChanged::CheckFirst),
+            ("skip", ProjectStepOnChanged::Skip),
+            ("run", ProjectStepOnChanged::Run),
+            ("check_first", ProjectStepOnChanged::CheckFirst),
         ];
 
         for test_case in test_cases.iter() {
-            let val: StepOnChanged = toml::from_str(&format!("\"{}\"", test_case.0))
+            let val: ProjectStepOnChanged = toml::from_str(&format!("\"{}\"", test_case.0))
                 .expect("unable to deserialize data");
             assert_eq!(val, test_case.1);
         }

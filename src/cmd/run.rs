@@ -94,7 +94,7 @@ impl Worker {
 
     /// If the worker is running, send a Stop message to it and wait until the
     /// underlying thread finishes.
-    pub fn stop(&self) {
+    pub fn stop_and_wait(&self) {
         let handle = self.join_handle.take();
         if let Some(handle) = handle {
             self.req_tx
@@ -104,6 +104,7 @@ impl Worker {
         }
     }
 
+    /// Start the worker thread.
     pub fn start(&self) {
         let req_rx = self.req_rx.clone();
         let res_tx = self.res_tx.clone();

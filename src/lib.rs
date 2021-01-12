@@ -8,5 +8,5 @@ mod utils;
 pub use {
     error::{Error, Result},
     project::Project,
-    service::Service,
+    service::{Service, ServiceStep},
 };

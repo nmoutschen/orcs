@@ -10,10 +10,10 @@ use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-const PROJECT_CONFIG_FILENAME: &'static str = "orcs.toml";
-const SERVICE_CONFIG_FILENAME: &'static str = "orcs.toml";
-const SERVICE_FOLDER: &'static str = "srv";
-const RECIPE_FOLDER: &'static str = "rcp";
+const PROJECT_CONFIG_FILENAME: &str = "orcs.toml";
+const SERVICE_CONFIG_FILENAME: &str = "orcs.toml";
+const SERVICE_FOLDER: &str = "srv";
+const RECIPE_FOLDER: &str = "rcp";
 
 #[derive(Default)]
 /// Orcs Project
@@ -59,7 +59,7 @@ impl Project {
 
         // Return the project
         let project = Self {
-            path: path.clone(),
+            path,
             config,
 
             ..Default::default()
@@ -95,6 +95,22 @@ impl Project {
 
         Ok(())
     }
+
+    // TODO
+    // /// Retrieve service steps based on a filter
+    // pub fn get_pairs(&self, filter: PairFilter) -> Result<HashMap<String, Rc<Pair>>> {
+    //     let service_steps = match filter {
+    //         // Default behavior
+    //         PairFilter::None => {
+    //             let services = self.get_all_services()?;
+    //             let steps = self.config.steps.iter().filter(
+    //                 |(step_name, step_config)| step_config.skip_run == false
+    //             ).collect();
+    //         },
+    //     };
+
+    //     Ok(service_steps)
+    // }
 
     /// Get a service from its name
     ///
@@ -222,7 +238,7 @@ impl Project {
         )?;
 
         // Create a ServiceBuilder
-        let mut service = Service::from_config(service_name, &service_config);
+        let mut service = Service::from_config(service_name, &self.config.steps, &service_config)?;
 
         // Parse all recipes in the service config
         let recipes = self.get_recipes(&service_config.recipes)?;
@@ -232,7 +248,7 @@ impl Project {
         // `ServiceBuilder::with_recipe` works the other way around for
         // simplicity's sake.
         for recipe in recipes.iter().rev() {
-            service.with_recipe(recipe);
+            service.with_recipe(&self.config.steps, recipe)?;
         }
 
         Ok(service.build())
