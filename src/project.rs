@@ -1,7 +1,7 @@
 use crate::{
     config::{ProjectConfig, RecipeConfig, ServiceConfig},
     utils::load_config,
-    Error, Result, Service,
+    Error, Result, Service, ServiceStep,
 };
 use git2::Repository;
 use std::cell::Cell;
@@ -96,21 +96,68 @@ impl Project {
         Ok(())
     }
 
-    // TODO
-    // /// Retrieve service steps based on a filter
-    // pub fn get_pairs(&self, filter: PairFilter) -> Result<HashMap<String, Rc<Pair>>> {
-    //     let service_steps = match filter {
-    //         // Default behavior
-    //         PairFilter::None => {
-    //             let services = self.get_all_services()?;
-    //             let steps = self.config.steps.iter().filter(
-    //                 |(step_name, step_config)| step_config.skip_run == false
-    //             ).collect();
-    //         },
-    //     };
+    /// Retrieve service steps based on a filter
+    pub fn get_service_steps(&self, filter: GetFilter) -> Result<HashMap<String, ServiceStep>> {
+        // Retrieve services
+        let services = if let GetFilter::StepsServices { services, .. } = filter {
+            // If we filter on both steps and services
+            services
+                .iter()
+                .map(|service_name| Ok((service_name.to_string(), self.get_service(service_name)?)))
+                .collect::<Result<HashMap<_, _>>>()?
+        } else if let GetFilter::Services { services } = filter {
+            // If we filter on services only
+            services
+                .iter()
+                .map(|service_name| Ok((service_name.to_string(), self.get_service(service_name)?)))
+                .collect::<Result<HashMap<_, _>>>()?
+        } else {
+            self.get_all_services()?
+        };
 
-    //     Ok(service_steps)
-    // }
+        // Retrieve steps
+        let steps = if let GetFilter::StepsServices { steps, .. } = filter {
+            // If we filter on steps and services
+            steps
+                .iter()
+                .map(|step_name| step_name.to_string())
+                .collect()
+        } else if let GetFilter::Steps { steps } = filter {
+            // If we filter on steps only
+            steps
+                .iter()
+                .map(|step_name| step_name.to_string())
+                .collect()
+        } else {
+            self.config
+                .steps
+                .iter()
+                .filter_map(|(step_name, step_config)| {
+                    if step_config.skip_run == false {
+                        Some(step_name.to_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        Ok(services
+            .iter()
+            .map(|(service_name, service)| {
+                steps
+                    .iter()
+                    .map(|step_name| {
+                        (
+                            format!("{}:{}", step_name, service_name),
+                            service.get_step(step_name),
+                        )
+                    })
+                    .collect::<Vec<(_, _)>>()
+            })
+            .flatten()
+            .collect::<HashMap<_, _>>())
+    }
 
     /// Get a service from its name
     ///
@@ -276,6 +323,29 @@ impl Project {
     }
 }
 
+/// Filter for fetching `ServiceStep`s
+pub enum GetFilter<'a> {
+    // Only return the product of steps and services mentioned explicitely.
+    StepsServices {
+        steps: &'a [&'a str],
+        services: &'a [&'a str],
+    },
+    // Return the combination of all steps that have the 'skip_run' flag set to
+    // false (default) with the list of explicitely named services.
+    Services {
+        services: &'a [&'a str],
+    },
+    // Return the combination of all services with the steps explicitely named.
+    Steps {
+        steps: &'a [&'a str],
+    },
+    // Default behavior
+    //
+    // This mode returns the cartesian product of all the steps that have the
+    // 'skip_run' flag set to false (default) and all services.
+    None,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,9 +467,7 @@ mod tests {
         assert_eq!(project.config.name, project_name);
         assert!(project.config.steps.contains_key(step_name));
         assert_eq!(service.name, "my-service");
-        let service_step = service
-            .get_step("my-step")
-            .expect("failed to get service step");
+        let service_step = service.get_step("my-step");
         assert_eq!(service_step.name, "my-step:my-service");
 
         let services = project.services.take();

@@ -56,8 +56,11 @@ impl Service {
     }
 
     // Retrieve a `ServiceStep` pair if it exists
-    pub fn get_step(&self, step_name: &str) -> Option<&ServiceStep> {
-        self.steps.get(step_name)
+    pub fn get_step(&self, step_name: &str) -> ServiceStep {
+        self.steps.get(step_name).map_or_else(
+            || ServiceStep::empty(step_name, &self.name),
+            |s| s.to_owned(),
+        )
     }
 }
 
@@ -121,7 +124,7 @@ impl<'a, 'b, 'c> ServiceBuilder<'a, 'b, 'c> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 /// Unique step:service pair
 pub struct ServiceStep {
     /// Name of the pair in 'step:service' format.
@@ -136,6 +139,13 @@ pub struct ServiceStep {
 }
 
 impl ServiceStep {
+    pub fn empty(step_name: &str, service_name: &str) -> Self {
+        Self {
+            name: format!("{}:{}", step_name, service_name),
+            ..Default::default()
+        }
+    }
+
     pub fn from_service_config<'a, 'b>(
         step_name: &str,
         service_name: &str,
@@ -230,6 +240,12 @@ pub enum Script {
     None,
 }
 
+impl Default for Script {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl From<&ScriptConfig> for Script {
     fn from(config: &ScriptConfig) -> Self {
         match config {
@@ -246,6 +262,12 @@ pub enum StepOnChanged {
     Skip,
     CheckFirst,
     Run,
+}
+
+impl Default for StepOnChanged {
+    fn default() -> Self {
+        Self::Run
+    }
 }
 
 impl From<&ProjectStepOnChanged> for StepOnChanged {
@@ -435,10 +457,13 @@ mod tests {
 
         // Project Step Configs
         let mut project_step_configs: HashMap<String, ProjectStepConfig> = HashMap::new();
-        project_step_configs.insert(String::from("my-step"), ProjectStepConfig {
-            depends_on: vec![String::from("my-step-dep")],
-            ..Default::default()
-        });
+        project_step_configs.insert(
+            String::from("my-step"),
+            ProjectStepConfig {
+                depends_on: vec![String::from("my-step-dep")],
+                ..Default::default()
+            },
+        );
 
         // Build a service
         let service_builder =
@@ -451,8 +476,12 @@ mod tests {
 
         assert_eq!(service.name, "my-service");
         assert_eq!(service_step.depends_on.len(), 2);
-        assert!(service_step.depends_on.contains(&String::from("my-step:my-service-dep")));
-        assert!(service_step.depends_on.contains(&String::from("my-step-dep:my-service")));
+        assert!(service_step
+            .depends_on
+            .contains(&String::from("my-step:my-service-dep")));
+        assert!(service_step
+            .depends_on
+            .contains(&String::from("my-step-dep:my-service")));
     }
 
     #[test]
